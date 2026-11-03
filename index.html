@@ -16,7 +16,7 @@
 <meta name="apple-mobile-web-app-title" content="가계부">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&display=swap">
-<script>try{var t=localStorage.getItem("gb-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}</script>
+<script>var t="light";try{t=localStorage.getItem("gb-theme")||"light";}catch(e){}if(t!=="system")document.documentElement.setAttribute("data-theme",t==="dark"?"dark":"light");</script>
 <style>
 /* Layout: fixed left sidebar + gray workspace of white cards; top nav bar + floating add button on phones. */
 :root{
@@ -342,7 +342,7 @@ const DEFAULT_EXPENSE = [
   ["쇼핑","g3","#d1785f"],["문화·여가","g3","#5f6fd1"],["경조사·선물","g3","#c45fa0"],["교육","g3","#3c8c8c"],["기타","g3","#8c94a6"]
 ].map(([name,group,color])=>({name,group,color,subs:[]}));
 const DEFAULT_INCOME = [["급여","#5b7be0"],["부수입","#4fae7f"],["용돈","#c9a03c"],["금융수익","#9a6bd6"],["기타","#8c94a6"]].map(([name,color])=>({name,color}));
-const DEFAULT_PREFS = {monthStart:1, hidden:[], short:false, font:1, theme:"system"};
+const DEFAULT_PREFS = {monthStart:1, hidden:[], short:false, font:1, theme:"light"};
 const TYPES = {income:"수입",expense:"지출",saving:"저축",invest:"투자",transfer:"이체"};
 const TRANSFER_CATS = ["계좌 간 이체","카드 대금","기타 이체"];
 const ACC_PURPOSE = {"계좌":["입출금","CMA","예적금","청약","간편결제","증권","기타"],"카드":["체크카드","신용카드","선불·상품권","기타"]};
@@ -928,7 +928,7 @@ function setHtml(){
     <div class="optrow"><div class="lbl"><b>한 달 시작일</b><small>월급날 기준으로 한 달을 계산하고 싶을 때 바꾸세요.</small></div><select class="sel" id="pref-start">${[...Array(28)].map((_,i)=>`<option value="${i+1}" ${startDay()===i+1?"selected":""}>매월 ${i+1}일</option>`).join("")}</select></div>
     <div class="optrow"><div class="lbl"><b>금액 표시</b><small>큰 금액을 ‘123.4만원’처럼 줄여서 보여줘요.</small></div>${seg("short",p.short?1:0,[[0,"전체 금액"],[1,"만원 단위"]])}</div>
     <div class="optrow"><div class="lbl"><b>글자 크기</b></div>${seg("font",p.font||1,[[0.9,"작게"],[1,"보통"],[1.12,"크게"],[1.25,"아주 크게"]])}</div>
-    <div class="optrow"><div class="lbl"><b>화면 테마</b></div>${seg("theme",p.theme||"system",[["system","기기 설정"],["light","밝게"],["dark","어둡게"]])}</div>
+    <div class="optrow"><div class="lbl"><b>화면 테마</b></div>${seg("theme",p.theme||"light",[["system","기기 설정"],["light","밝게"],["dark","어둡게"]])}</div>
     <div class="optrow"><div class="lbl"><b>메뉴 표시</b><small>쓰지 않는 메뉴는 꺼 두세요. 데이터는 지워지지 않아요.</small></div><div class="menu-checks">${HIDEABLE.map(([k,l])=>`<label class="check"><input type="checkbox" data-menu="${k}" ${p.hidden.includes(k)?"":"checked"}> ${l}</label>`).join("")}</div></div>
   </section>
   <section class="card set-sec"><div class="card-h"><h2>앱처럼 쓰기</h2></div>
