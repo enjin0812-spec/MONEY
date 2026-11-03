@@ -1401,6 +1401,7 @@ function importModal(d){
   ${newCats.length?`<label class="check" style="margin-top:10px"><input type="checkbox" id="m-newcats" data-k="newcats" ${d.newcats!==""?"checked":""}> 없는 카테고리 ${newCats.length}개 새로 만들기 (${newCats.slice(0,5).map(esc).join(", ")}${newCats.length>5?" 등":""})</label>`:""}`};
 }
 async function loadImportFile(file){
+  if(/\.json$/i.test(file.name)){ M.kind="restore"; M.d={}; M.err=""; return loadRestoreFile(file); }
   M.d={step:1,loading:true}; M.skipRead=true; render();
   try{
     let table;
