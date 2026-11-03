@@ -487,6 +487,7 @@ function makeSbApi(userId){
       renameLocal(kind,old,nw);
     },
     async password(pw){ const {error}=await sb.auth.updateUser({password:pw}); if(error) throw error; },
+    async convert(email,pw){ const {data,error}=await sb.auth.updateUser({email,password:pw},{emailRedirectTo:location.origin+location.pathname}); if(error) throw error; const u=data&&data.user; if(u&&u.email===email){ S.me.email=email; S.me.anon=false; return "done"; } return "pending"; },
     async deleteAccount(){ const {error}=await sb.rpc("delete_my_account"); if(error) throw error; await sb.auth.signOut(); }
   };
 }
@@ -498,6 +499,7 @@ function makeDemoApi(){
     async saveSettings(s){ S.settings=s; applyPrefs(); render(); },
     async rename(kind,old,nw){ renameLocal(kind,old,nw); },
     async password(){ },
+    async convert(email){ S.me.email=email; S.me.anon=false; return "done"; },
     async deleteAccount(){ resetState(); S.mode="gate"; }
   };
 }
@@ -519,7 +521,7 @@ function resetState(){
   S.tf={type:"all",q:"",cat:"",tag:"",acc:"",sort:"date-desc",page:1,all:false,day:"",mode:"list"}; S.af={q:"",kind:"all"}; api=null; M=null;
 }
 async function startSession(user){
-  resetState(); S.mode="db"; S.me={id:user.id,email:user.email||""}; api=makeSbApi(user.id); render();
+  resetState(); S.mode="db"; S.me={id:user.id,email:user.email||"",anon:!!user.is_anonymous&&!user.email}; api=makeSbApi(user.id); render();
   try{
     let {data:row,error}=await sb.from("settings").select("*").maybeSingle(); if(error) throw error;
     if(!row){ const ins=await sb.from("settings").insert(settingsTo(defaultSettings())).select().single(); if(ins.error) throw ins.error; row=ins.data; }
@@ -543,6 +545,7 @@ async function boot(){
       if(ev==="PASSWORD_RECOVERY"){ S.mode="gate"; S.auth={tab:"newpw",msg:"",err:""}; render(); return; }
       if(ev==="SIGNED_OUT"){ const msg=S.auth.byeMsg||"로그아웃했어요."; resetState(); S.mode="gate"; S.auth={tab:"login",msg,err:""}; applyPrefs(); render(); return; }
       if(session && session.user && S.auth.tab!=="newpw" && !(S.mode==="db" && S.me && S.me.id===session.user.id)) startSession(session.user);
+      else if(session && session.user && S.me && S.me.id===session.user.id && session.user.email){ S.me.email=session.user.email; S.me.anon=false; render(); }
     },0);
   });
   const {data}=await sb.auth.getSession();
@@ -550,6 +553,7 @@ async function boot(){
   else if(S.mode!=="db"){ S.mode="gate"; render(); }
 }
 async function logout(){
+  if(S.mode==="db"&&S.me&&S.me.anon){ openModal("guestout"); return; }
   if(S.mode==="demo"){ resetState(); S.mode="gate"; render(); return; }
   try{ await sb.auth.signOut(); }catch(e){ resetState(); S.mode="gate"; render(); }
 }
@@ -597,14 +601,14 @@ function render(){
       <div><div class="nav-h">관리</div><nav class="nav">${visibleNav().map(([k,l,i])=>`<button data-nav="${k}" class="${S.view===k?"on":""}">${ic(i)}${l}</button>`).join("")}</nav></div>
       <div class="side-foot">
         <div class="lock">${ic("lock",14)} 비공개 · 나만 보기</div>
-        <div style="word-break:break-all">${esc(me.email||"내 계정")}</div>
+        <div style="word-break:break-all">${me.anon?"비회원":esc(me.email||"내 계정")}</div>
         <p>${S.mode==="demo"?"체험 모드는 저장되지 않아요.":"기록은 이 계정에만 저장되고 다른 사용자에게 보이지 않아요."}</p>
         <button class="btn sm" id="logout">${S.mode==="demo"?"체험 종료":"로그아웃"}</button>
       </div>
     </aside>
     <div style="min-width:0">
       <div class="top"><span class="top-title">개인 가계부</span><span class="top-brand"><span class="brand-ic">${ic("acc",15)}</span>가계부</span><div class="top-r"><button class="link mute" id="logout2">${S.mode==="demo"?"체험 종료":"로그아웃"}</button><button class="icon-btn" id="refresh" aria-label="새로고침">${ic("refresh",16)}</button><span class="num">${today.getFullYear()}. ${pad(today.getMonth()+1)}. ${pad(today.getDate())}</span></div></div>
-      <main>${S.loadNote?`<div class="banner">${esc(S.loadNote)}</div>`:""}${viewHtml()}</main>
+      <main>${S.loadNote?`<div class="banner">${esc(S.loadNote)}</div>`:""}${me.anon&&S.ready&&(S.view==="home"||S.view==="set")?`<div class="banner" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span>비회원으로 쓰는 중이에요. 이 기기·브라우저에서만 다시 열 수 있어요. 이메일을 등록하면 다른 기기에서도 볼 수 있어요.</span><button class="btn sm pri" data-open="convert">회원으로 전환</button></div>`:""}${viewHtml()}</main>
     </div>
   </div>
   ${tabbarHtml()}
@@ -714,7 +718,7 @@ function tabbarHtml(){
 function sheetHtml(){
   const main=tabItems().filter(Boolean).map(x=>x[0]);
   const rest=visibleNav().filter(([k])=>!main.includes(k));
-  return `<div class="sheet-ov" id="sheet"><div class="sheet" role="dialog" aria-label="전체 메뉴"><div class="grab"></div><div class="who">${esc((S.me||{}).email||"")} · 내 기록은 나만 볼 수 있어요</div>
+  return `<div class="sheet-ov" id="sheet"><div class="sheet" role="dialog" aria-label="전체 메뉴"><div class="grab"></div><div class="who">${S.me&&S.me.anon?"비회원":esc((S.me||{}).email||"")} · 내 기록은 나만 볼 수 있어요</div>
   ${rest.map(([k,l,i])=>`<button class="row ${S.view===k?"on":""}" data-nav="${k}">${ic(i,20)}${l}</button>`).join("")}
   <button class="row" id="logout3">${ic("lock",20)}${S.mode==="demo"?"체험 종료":"로그아웃"}</button></div></div>`;
 }
@@ -935,7 +939,8 @@ function setHtml(){
     <div class="optrow"><div class="lbl"><b>홈 화면에 추가</b><small>${isStandalone()?"지금 앱으로 열려 있어요.":installEvt?"버튼을 누르면 홈 화면에 앱 아이콘이 생겨요.":"아이폰: Safari 아래쪽 공유 버튼 → ‘홈 화면에 추가’<br>안드로이드: Chrome 오른쪽 위 ⋮ → ‘홈 화면에 추가’ 또는 ‘앱 설치’"}</small></div>${installEvt&&!isStandalone()?`<button class="btn sm pri" id="install">앱 설치</button>`:""}</div>
   </section>
   <section class="card set-sec"><div class="card-h"><h2>계정·데이터</h2></div>
-    <div class="optrow"><div class="lbl"><b>로그인 이메일</b><small>${esc((S.me||{}).email||"")}</small></div>${S.mode==="db"?`<button class="btn sm" data-open="pw">비밀번호 변경</button>`:""}</div>
+    ${S.me&&S.me.anon?`<div class="optrow"><div class="lbl"><b>비회원</b><small>이메일과 비밀번호를 등록하면 지금 기록 그대로 회원이 돼요.</small></div><button class="btn sm pri" data-open="convert">회원으로 전환</button></div>`
+    :`<div class="optrow"><div class="lbl"><b>로그인 이메일</b><small>${esc((S.me||{}).email||"")}</small></div>${S.mode==="db"?`<button class="btn sm" data-open="pw">비밀번호 변경</button>`:""}</div>`}
     <div class="optrow"><div class="lbl"><b>전체 거래 내보내기</b><small>모든 기간의 거래를 엑셀에서 열 수 있는 CSV 파일로 저장해요.</small></div><button class="btn sm" id="csv-all">${ic("dl",14)} CSV 저장</button></div>
     <div class="optrow"><div class="lbl"><b>회원 탈퇴</b><small>계정과 모든 기록이 즉시 삭제되고 되돌릴 수 없어요.</small></div><button class="btn sm danger" data-open="bye">탈퇴하기</button></div>
   </section>`;
@@ -954,7 +959,7 @@ function openModal(kind,id,preset={}){
   if(kind==="budget"){ d={name:id,amount:st().baseBudget[id]||0}; }
   if(kind==="once"){ d={name:id,amount:budgetFor(id,S.month)}; }
   if(kind==="total"){ d={amount:st().totalBudget||0}; }
-  if(kind==="pw"||kind==="bye") d={};
+  if(kind==="pw"||kind==="bye"||kind==="convert"||kind==="guestout") d={};
   M={kind,id,d,err:"",armed:false}; render();
   if(!isMobile()) setTimeout(()=>{ const el=document.querySelector(".modal input:not([type=hidden]):not([type=color]),.modal select"); if(el&&!(document.activeElement&&document.activeElement.closest&&document.activeElement.closest(".modal"))) el.focus(); },0);
 }
@@ -1016,9 +1021,11 @@ function modalHtml(){
   if(kind==="once"){ title=`${esc(d.name)} · ${shortLabel(S.month)} 예산`; body=`${fld("이번 달 예산 (원)",amtInp("amount",d.amount))}${isOverride(d.name,S.month)?`<button type="button" class="link" id="once-reset">기본 예산으로 되돌리기</button>`:""}`; }
   if(kind==="total"){ title="월 기준 예산"; body=fld("한 달 전체 예산 (원)",amtInp("amount",d.amount),"소비 예산과 저축·투자 목표를 배분할 때 기준이 되는 금액이에요."); }
   if(kind==="pw"){ title="비밀번호 변경"; body=`${fld("새 비밀번호 (8자 이상)",'<input id="m-pw" data-k="pw" type="password" autocomplete="new-password" minlength="8">')}${fld("비밀번호 확인",'<input id="m-pw2" data-k="pw2" type="password" autocomplete="new-password" minlength="8">')}`; }
+  if(kind==="convert"){ title="회원으로 전환"; saveLabel="전환하기"; body=`<p style="margin:0 0 12px;font-size:13px;color:var(--sub)">지금까지 기록한 내용은 그대로 유지돼요. 다음부터는 이 이메일과 비밀번호로 어느 기기에서든 로그인할 수 있어요.</p>${fld("이메일",inp("email",d.email,'type="email" autocomplete="email"'))}${fld("비밀번호 (8자 이상)",'<input id="m-pw" data-k="pw" type="password" autocomplete="new-password" minlength="8">')}${fld("비밀번호 확인",'<input id="m-pw2" data-k="pw2" type="password" autocomplete="new-password" minlength="8">')}`; }
+  if(kind==="guestout"){ title="비회원 로그아웃"; saveLabel="기록 삭제하고 나가기"; body=`<p style="margin:0 0 10px;font-size:13px;color:var(--sub)">비회원은 로그아웃하면 이 기록에 다시 들어올 수 없어요.</p><p style="margin:0 0 4px;font-size:13px;color:var(--sub)">기록을 남기고 싶으면 먼저 이메일을 등록해 회원으로 전환하세요.</p><button type="button" class="btn pri" style="width:100%;margin-top:12px" id="to-convert">회원으로 전환하고 계속 쓰기</button>`; }
   if(kind==="bye"){ title="회원 탈퇴"; saveLabel="탈퇴하기"; body=`<p style="margin:0 0 12px;font-size:13px;color:var(--sub)">계정과 거래, 계좌, 예산, 반복 거래가 모두 즉시 삭제돼요. 되돌릴 수 없어요. 필요하면 먼저 ‘전체 거래 내보내기’로 저장해 두세요.</p>${fld("확인을 위해 ‘탈퇴’라고 입력하세요",inp("confirm","",'autocomplete="off"'))}`; }
   return `<div class="ov" id="ov"><form class="modal" id="mform" role="dialog" aria-modal="true" aria-label="${esc(title)}" novalidate><h3>${title}</h3>${body}<div class="err" role="alert">${esc(M.err)}</div>
-  <div class="m-foot">${canDel?`<button type="button" class="btn danger ${M.armed?"armed":""}" id="mdel">${M.armed?"한 번 더 누르면 삭제":"삭제"}</button>`:""}<div class="r"><button type="button" class="btn" id="mcancel">취소</button><button type="submit" class="btn ${kind==="bye"?"danger":"pri"}">${saveLabel}</button></div></div></form></div>`;
+  <div class="m-foot">${canDel?`<button type="button" class="btn danger ${M.armed?"armed":""}" id="mdel">${M.armed?"한 번 더 누르면 삭제":"삭제"}</button>`:""}<div class="r"><button type="button" class="btn" id="mcancel">취소</button><button type="submit" class="btn ${kind==="bye"||kind==="guestout"?"danger":"pri"}">${saveLabel}</button></div></div></form></div>`;
 }
 function readModal(){ $$("#mform [data-k]").forEach(el=>{ M.d[el.dataset.k]=el.value; }); }
 const need=(c,msg)=>{ if(!c){ M.err=msg; render(); throw 0; } };
@@ -1078,6 +1085,10 @@ async function saveModal(){
     if(kind==="total"){ const s=clone(st()); s.totalBudget=parseAmt(d.amount); M=null; await api.saveSettings(s); toast("기준 예산을 바꿨어요"); }
     if(kind==="pw"){ need((d.pw||"").length>=8,"비밀번호는 8자 이상이어야 해요."); need(d.pw===d.pw2,"비밀번호 확인이 일치하지 않아요.");
       try{ await api.password(d.pw); }catch(e){ M.err=AUTH_ERR(e.message||""); render(); return; } M=null; render(); toast("비밀번호를 바꿨어요"); }
+    if(kind==="convert"){ const email=(d.email||"").trim(); need(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),"이메일 주소를 확인해 주세요."); need((d.pw||"").length>=8,"비밀번호는 8자 이상이어야 해요."); need(d.pw===d.pw2,"비밀번호 확인이 일치하지 않아요.");
+      let r; try{ r=await api.convert(email,d.pw); }catch(e){ M.err=AUTH_ERR(e.message||""); render(); return; }
+      M=null; render(); toast(r==="done"?"회원으로 전환했어요. 이제 이메일로 로그인할 수 있어요.":"인증 메일을 보냈어요. 메일의 링크를 누르면 전환이 끝나요."); }
+    if(kind==="guestout"){ try{ S.auth.byeMsg="비회원 기록을 삭제하고 나왔어요."; await api.deleteAccount(); }catch(e){ S.auth.byeMsg=""; M.err="처리하지 못했어요. 잠시 후 다시 시도해 주세요."; render(); return; } M=null; render(); }
     if(kind==="bye"){ need((d.confirm||"").trim()==="탈퇴","‘탈퇴’라고 정확히 입력해 주세요.");
       try{ S.auth.byeMsg="탈퇴했어요. 계정과 모든 기록이 삭제됐어요."; await api.deleteAccount(); }catch(e){ S.auth.byeMsg=""; M.err="탈퇴하지 못했어요. 잠시 후 다시 시도해 주세요."; render(); return; }
       M=null; if(S.mode==="gate"){ S.auth={tab:"login",msg:"체험을 종료했어요.",err:""}; } render(); }
@@ -1173,6 +1184,7 @@ function bind(){
     ["#m-unit","#m-category"].forEach(k=>{ const el=$(k); if(el) el.addEventListener("change",()=>{ readModal(); if(k==="#m-category") M.d.sub=""; M.skipRead=true; render(); }); });
     $("#mcancel").onclick=()=>{ M=null; render(); };
     const del=$("#mdel"); if(del) del.onclick=deleteModal;
+    const tc=$("#to-convert"); if(tc) tc.onclick=()=>openModal("convert");
     const orr=$("#once-reset"); if(orr) orr.onclick=async()=>{ const s=clone(st()); if(s.monthBudget[S.month]) delete s.monthBudget[S.month][M.d.name]; M=null; await api.saveSettings(s); toast("기본 예산으로 되돌렸어요"); };
     $("#ov").onclick=e=>{ if(e.target.id==="ov"){ M=null; render(); } };
   }
@@ -1210,11 +1222,11 @@ function gateHtml(){
     ${su?"":`<button class="link" type="button" data-atab="reset" style="align-self:center">비밀번호를 잊었어요</button>`}</div></form>`;
   }
   return `<div class="gate"><div class="gate-box">${brand}${form}
-  <div style="border-top:1px solid var(--line2);margin-top:20px;padding-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:11.5px;color:var(--mute)">계좌번호·카드번호는 입력받지 않아요.</span><button class="link" id="demo" type="button">저장 없이 둘러보기</button></div></div></div>`;
+  <div style="border-top:1px solid var(--line2);margin-top:20px;padding-top:16px;display:flex;flex-direction:column;gap:10px"><button class="btn" id="guest" type="button" style="width:100%" ${A.busy?"disabled":""}>비회원으로 시작하기</button><span style="font-size:11.5px;color:var(--mute);line-height:1.5">가입 없이 바로 써요. 기록은 이 기기·브라우저에서만 다시 열 수 있고, 나중에 이메일을 등록해 회원으로 전환할 수 있어요. 계좌번호·카드번호는 입력받지 않아요.</span></div></div></div>`;
 }
-const AUTH_ERR = m => /Invalid login credentials/i.test(m)?"이메일 또는 비밀번호가 맞지 않아요.":/Email not confirmed/i.test(m)?"메일함에서 인증 링크를 먼저 눌러주세요.":/already registered|already exists/i.test(m)?"이미 가입된 이메일이에요. 로그인해 주세요.":/rate limit|too many/i.test(m)?"요청이 너무 많아요. 잠시 후 다시 시도해 주세요.":/should be different|same/i.test(m)?"지금 비밀번호와 다른 비밀번호를 입력해 주세요.":/password/i.test(m)?"비밀번호 조건을 확인해 주세요. (8자 이상)":/email/i.test(m)?"이메일 주소를 확인해 주세요.":"처리하지 못했어요. 잠시 후 다시 시도해 주세요.";
+const AUTH_ERR = m => /anonymous/i.test(m)?"지금은 비회원 이용이 꺼져 있어요. 회원가입으로 시작해 주세요.":/Invalid login credentials/i.test(m)?"이메일 또는 비밀번호가 맞지 않아요.":/Email not confirmed/i.test(m)?"메일함에서 인증 링크를 먼저 눌러주세요.":/already (been )?registered|already exists|email_exists/i.test(m)?"이미 가입된 이메일이에요. 다른 이메일을 쓰거나 로그인해 주세요.":/rate limit|too many/i.test(m)?"요청이 너무 많아요. 잠시 후 다시 시도해 주세요.":/should be different|same/i.test(m)?"지금 비밀번호와 다른 비밀번호를 입력해 주세요.":/password/i.test(m)?"비밀번호 조건을 확인해 주세요. (8자 이상)":/email/i.test(m)?"이메일 주소를 확인해 주세요.":"처리하지 못했어요. 잠시 후 다시 시도해 주세요.";
 function bindGate(){
-  const d=$("#demo"); if(d) d.onclick=startDemo;
+  const g=$("#guest"); if(g) g.onclick=async()=>{ if(!sb) return; S.auth.err=""; S.auth.msg=""; S.auth.busy=true; render(); try{ const {error}=await sb.auth.signInAnonymously(); if(error) throw error; }catch(err){ S.auth.busy=false; S.auth.err=AUTH_ERR(err.message||""); render(); } };
   $$("[data-atab]").forEach(b=>b.onclick=()=>{ const em=$("#a-email"); S.auth={tab:b.dataset.atab,msg:"",err:"",email:em?em.value:S.auth.email}; render(); });
   const f=$("#authform"); if(!f) return;
   f.onsubmit=async e=>{
