@@ -1,0 +1,40 @@
+name: Supabase 깨우기
+
+# 무료 Supabase는 일주일 동안 사용이 거의 없으면 일시정지돼요.
+# 매일 한 번 DB에 가벼운 신호(keepalive 함수 호출)를 보내 정지를 막아요.
+# 매월 1일에는 이 저장소에 기록을 남겨, 오래 수정이 없어도 예약 작업이 꺼지지 않게 해요.
+on:
+  schedule:
+    - cron: "37 18 * * *"   # 매일 한국시간 새벽 3시 37분
+  workflow_dispatch: {}      # Actions 탭에서 직접 실행 가능
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Supabase에 신호 보내기
+        run: |
+          curl -fsS --retry 3 --retry-delay 10 -X POST \
+            "https://exrqsdngmzmhmyaupcxz.supabase.co/rest/v1/rpc/keepalive" \
+            -H "apikey: sb_publishable_j3KdfFEGNNZjYL7sQA4Lsg_YPawBz54" \
+            -H "Content-Type: application/json" -d '{}'
+          echo " ← 1이 나오면 성공"
+      - name: 저장소 가져오기
+        uses: actions/checkout@v4
+      - name: 활동 기록 남기기 (매월 1일)
+        run: |
+          if [ "$(TZ=Asia/Seoul date +%d)" = "01" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            mkdir -p .github
+            TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST' > .github/last-ping.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/last-ping.txt
+            git commit -m "Supabase 깨우기 기록" || echo "변경 없음"
+            git push || echo "기록 저장 실패 (신호는 이미 보냄)"
+          else
+            echo "오늘은 기록 생략"
+          fi
