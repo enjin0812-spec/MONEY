@@ -96,20 +96,25 @@ begin
 end $$;
 
 -- ---------- 3. 가입 시 빈 대시보드 + 기본 카테고리 자동 생성 ----------
+alter table public.settings add column if not exists groups jsonb not null default '[]'::jsonb;
+alter table public.settings add column if not exists prefs  jsonb not null default '{}'::jsonb;
 create or replace function public.create_default_book(uid uuid)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.settings (user_id, expense_cats, income_cats)
+  insert into public.settings (user_id, groups, expense_cats, income_cats, prefs)
   values (uid,
-    '[{"name":"예비비","group":"변동비"},{"name":"식비","group":"변동비"},{"name":"생활·생필품","group":"변동비"},{"name":"교통비","group":"변동비"},
-      {"name":"쇼핑·문화·취미","group":"자유자금"},{"name":"자기계발·경조사","group":"자유자금"},{"name":"의료·미용·의류·신발","group":"자유자금"},
-      {"name":"보험","group":"고정비"},{"name":"통신비","group":"고정비"},{"name":"구독비","group":"고정비"},{"name":"데이트비","group":"고정비"}]'::jsonb,
-    '["급여","부수입","리뷰비","이자·배당","용돈","기타수입"]'::jsonb)
+    '[{"id":"g1","name":"생활비"},{"id":"g2","name":"고정지출"},{"id":"g3","name":"여가·기타"}]'::jsonb,
+    '[{"name":"식비","group":"g1","color":"#e0855b","subs":[]},{"name":"카페·간식","group":"g1","color":"#c9a03c","subs":[]},
+      {"name":"생활용품","group":"g1","color":"#4fae7f","subs":[]},{"name":"교통","group":"g1","color":"#3fa3b8","subs":[]},
+      {"name":"의료·건강","group":"g1","color":"#d65b7a","subs":[]},
+      {"name":"주거·관리비","group":"g2","color":"#5b7be0","subs":[]},{"name":"통신","group":"g2","color":"#9a6bd6","subs":[]},
+      {"name":"보험","group":"g2","color":"#6c8f3a","subs":[]},{"name":"구독","group":"g2","color":"#b46f3c","subs":[]},
+      {"name":"쇼핑","group":"g3","color":"#d1785f","subs":[]},{"name":"문화·여가","group":"g3","color":"#5f6fd1","subs":[]},
+      {"name":"경조사·선물","group":"g3","color":"#c45fa0","subs":[]},{"name":"교육","group":"g3","color":"#3c8c8c","subs":[]},
+      {"name":"기타","group":"g3","color":"#8c94a6","subs":[]}]'::jsonb,
+    '[{"name":"급여","color":"#5b7be0"},{"name":"부수입","color":"#4fae7f"},{"name":"용돈","color":"#c9a03c"},{"name":"금융수익","color":"#9a6bd6"},{"name":"기타","color":"#8c94a6"}]'::jsonb,
+    '{"monthStart":1}'::jsonb)
   on conflict (user_id) do nothing;
-  insert into public.plans (user_id, name, type, sort) values
-    (uid,'파킹/자유적금(비상금)','저축',1),(uid,'주택청약','저축',2),(uid,'장기적금','저축',3),
-    (uid,'NASDAQ','투자',4),(uid,'S&P 500','투자',5)
-  on conflict (user_id, name) do nothing;
 end $$;
 revoke all on function public.create_default_book(uuid) from public, anon, authenticated;
 
