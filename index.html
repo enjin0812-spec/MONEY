@@ -593,6 +593,7 @@ function makeSbApi(userId){
     async del(col,id){ const {error}=await sb.from(TABLE[col]).delete().eq("id",id); if(error) fail(error); S[col]=S[col].filter(x=>x.id!==id); render(); },
     async addMany(col,rows){ const out=[]; for(let i=0;i<rows.length;i+=200){ const {data,error}=await sb.from(TABLE[col]).insert(rows.slice(i,i+200).map(r=>toRow(col,r))).select(); if(error) fail(error); data.forEach(r=>{ const o=fromRow(col,r); upsertLocal(col,o); out.push(o); }); } render(); return out; },
     async delWhere(col,field,val){ const {error}=await sb.from(TABLE[col]).delete().eq(field,val); if(error) fail(error); S[col]=S[col].filter(x=>x[field]!==val); render(); },
+    async wipeAll(){ for(const col of ["tx","fixed","plans","accounts"]){ const {error}=await sb.from(TABLE[col]).delete().eq("user_id",userId); if(error) fail(error); S[col]=[]; } render(); },
     saveSettings(s){ S.settings=s; applyPrefs(); render(); chain=chain.then(async()=>{ const {error}=await sb.from("settings").update(settingsTo(s)).eq("user_id",userId); if(error) handleWriteError(error); }); return chain; },
     async rename(kind,old,nw){
       const types = kind==="expense"?["expense"]:kind==="income"?["income"]:["saving","invest"];
@@ -613,6 +614,7 @@ function makeDemoApi(){
     async add(col,obj,quiet){ if(col==="tx"&&obj.recurring_id&&S.tx.some(t=>t.recurring_id===obj.recurring_id&&t.month===obj.month)){ const e={message:"duplicate key"}; if(quiet) throw e; handleWriteError(e); throw e; } const o={...obj,id:uid(),created_at:new Date().toISOString()}; if(col==="tx") o.createdAt=o.created_at; upsertLocal(col,o); render(); return o; },
     async addMany(col,rows){ const out=rows.map(r=>{ const o={...r,id:uid(),created_at:new Date().toISOString()}; if(col==="tx") o.createdAt=o.created_at; upsertLocal(col,o); return o; }); render(); return out; },
     async delWhere(col,field,val){ S[col]=S[col].filter(x=>x[field]!==val); render(); },
+    async wipeAll(){ S.tx=[]; S.fixed=[]; S.plans=[]; S.accounts=[]; render(); },
     async del(col,id){ S[col]=S[col].filter(x=>x.id!==id); if(col==="accounts") S.tx.forEach(t=>{ if(t.account_id===id) t.account_id=null; if(t.to_account_id===id) t.to_account_id=null; }); render(); },
     async saveSettings(s){ S.settings=s; applyPrefs(); render(); },
     async rename(kind,old,nw){ renameLocal(kind,old,nw); },
@@ -1501,21 +1503,24 @@ function restoreModal(d){
   const b=d.data, has=S.tx.length+S.accounts.length+S.fixed.length;
   return {title,saveLabel:"복원하기",body:`<p style="margin:0 0 10px;font-size:13px;color:var(--sub)">${esc((b.exported_at||"").slice(0,10))}에 만든 백업이에요.</p>
   <div class="pace-sum"><div>거래<b>${(b.tx||[]).length}건</b></div><div>계좌·카드·대출<b>${(b.accounts||[]).length}개</b></div><div>반복 거래<b>${(b.fixed||[]).length}개</b></div><div>저축·투자<b>${(b.plans||[]).length}개</b></div></div>
-  <p class="note" style="margin:0">카테고리·예산·화면 설정은 백업 내용으로 바뀌어요.${has?` <b style="color:var(--neg)">지금 있는 기록은 지워지지 않고 백업이 더해져요.</b> 같은 기록이 두 번 생길 수 있으니 빈 계정에서 복원하는 걸 권해요.`:""}</p>`};
+  <p class="note" style="margin:0 0 10px">카테고리·예산·화면 설정은 백업 내용으로 바뀌어요.</p>
+  ${has?`<label class="check" style="align-items:flex-start"><input type="checkbox" id="m-wipe" data-k="wipe" ${d.wipe!==""?"checked":""} style="margin-top:3px"> <span>지금 계정의 기록 ${S.tx.length}건·계좌 ${S.accounts.length}개·반복 거래 ${S.fixed.length}개·저축 항목 ${S.plans.length}개를 <b style="color:var(--neg)">모두 지우고</b> 복원하기 (추천: 같은 기록이 두 번 생기지 않아요)</span></label>`:""}`};
 }
 async function loadRestoreFile(file){
-  try{ const data=JSON.parse(await file.text()); if(data.app!=="gagyebu"||!Array.isArray(data.tx)) throw 0; M.d={data}; M.err=""; }
+  try{ const data=JSON.parse(await file.text()); if(data.app!=="gagyebu"||!Array.isArray(data.tx)) throw 0; M.d={data,wipe:"1"}; M.err=""; }
   catch(e){ M.d={}; M.err="이 가계부의 백업 파일이 아니에요."; }
   M.skipRead=true; render();
 }
 async function runRestore(){
-  const b=M.d.data; M=null; render(); toast("복원하는 중이에요…");
+  const b=M.d.data, wipe=M.d.wipe!=="" && (S.tx.length+S.accounts.length+S.fixed.length+S.plans.length)>0; M=null; render(); toast("복원하는 중이에요…");
   try{
+    if(wipe) await api.wipeAll();
     const accMap={}, fxMap={};
-    for(const a of b.accounts||[]){ const row=await api.add("accounts",{kind:a.kind,name:a.name,institution:a.institution||"",purpose:a.purpose||"",balance:0,balance_at:new Date().toISOString(),link:"",memo:a.memo||""},true); accMap[a.id]=row.id; }
-    for(const p of b.plans||[]){ if(S.plans.some(x=>x.name===p.name)) continue; await api.add("plans",{name:p.name,type:p.type,target:+p.target||0,memo:p.memo||"",order:p.sort??99,goal:+p.goal||0,goal_date:p.goal_date||null,saved_base:+p.saved_base||0},true); }
-    for(const f of b.fixed||[]){ const row=await api.add("fixed",{name:f.name,type:f.type||"expense",category:f.category||"",sub:f.sub||"",day:f.day||null,amount:+f.amount,active:f.active!==false,auto:!!f.auto,account_id:accMap[f.account_id]||null,to_account_id:accMap[f.to_account_id]||null,start_month:f.start_month||null,last_month:f.last_month||null,tags:f.tags||[],memo:f.memo||""},true); fxMap[f.id]=row.id; }
-    const txRows=(b.tx||[]).map(t=>({type:t.type,unit:t.unit,date:t.unit==="day"?t.date:null,month:t.month,amount:+t.amount,category:t.category||"",sub:t.sub||"",title:t.title||"",method:t.method||"",memo:t.memo||"",tags:t.tags||[],account_id:accMap[t.account_id]||null,to_account_id:accMap[t.to_account_id]||null,recurring_id:fxMap[t.recurring_id]||null,inst_id:t.inst_id||null,inst_no:t.inst_id?t.inst_no:null,inst_total:t.inst_id?t.inst_total:null}));
+    const cut=(v,n)=>String(v??"").slice(0,n), tg=v=>(Array.isArray(v)?v:[]).slice(0,5).map(x=>cut(x,20));
+    for(const a of b.accounts||[]){ const row=await api.add("accounts",{kind:["계좌","카드","대출"].includes(a.kind)?a.kind:"계좌",name:cut(a.name,40)||"계좌",institution:cut(a.institution,40),purpose:cut(a.purpose,20),balance:0,balance_at:new Date().toISOString(),link:"",memo:cut(a.memo,120)},true); accMap[a.id]=row.id; }
+    for(const p of b.plans||[]){ if(S.plans.some(x=>x.name===cut(p.name,40))) continue; await api.add("plans",{name:cut(p.name,40),type:p.type==="투자"?"투자":"저축",target:Math.max(0,+p.target||0),memo:cut(p.memo,160),order:p.sort??99,goal:Math.max(0,+p.goal||0),goal_date:p.goal_date||null,saved_base:Math.max(0,+p.saved_base||0)},true); }
+    for(const f of b.fixed||[]){ if(!(+f.amount>0)) continue; const row=await api.add("fixed",{name:cut(f.name,40)||"반복 거래",type:f.type||"expense",category:cut(f.category,40),sub:cut(f.sub,40),day:f.day||null,amount:+f.amount,active:f.active!==false,auto:!!f.auto,account_id:accMap[f.account_id]||null,to_account_id:accMap[f.to_account_id]||null,start_month:f.start_month||null,last_month:f.last_month||null,tags:tg(f.tags),memo:cut(f.memo,120)},true); fxMap[f.id]=row.id; }
+    const txRows=(b.tx||[]).filter(t=>+t.amount>0).map(t=>({type:t.type,unit:t.unit,date:t.unit==="day"?t.date:null,month:t.month,amount:Math.round(+t.amount),category:cut(t.category,40),sub:cut(t.sub,40),title:cut(t.title,80),method:cut(t.method,40),memo:cut(t.memo,200),tags:tg(t.tags),account_id:accMap[t.account_id]||null,to_account_id:accMap[t.to_account_id]||null,recurring_id:fxMap[t.recurring_id]||null,inst_id:t.inst_id||null,inst_no:t.inst_id?t.inst_no:null,inst_total:t.inst_id?t.inst_total:null}));
     if(txRows.length) await api.addMany("tx",txRows);
     const now=new Date(Date.now()+1000).toISOString();
     for(const a of b.accounts||[]){ const nid=accMap[a.id]; const cur=S.accounts.find(x=>x.id===nid); if(!cur) continue; await api.put("accounts",nid,{...cur,balance:a._balance!=null?+a._balance:+a.balance||0,balance_at:now,link:accMap[a.link]||""}); }
