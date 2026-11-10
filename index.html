@@ -467,6 +467,7 @@ function addMonthsDate(ds,k){ const [y,m,d]=ds.split("-").map(Number); const t=n
 function downloadFile(name,text,type){ const blob=new Blob([text],{type}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },1000); }
 const sum = (arr,f=x=>x) => arr.reduce((a,x)=>a+(+f(x)||0),0);
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+const newId = () => (crypto.randomUUID ? crypto.randomUUID() : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g,c=>(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16)));
 const clone = o => JSON.parse(JSON.stringify(o));
 const WD = ["일","월","화","수","목","금","토"];
 const trim1 = x => (Math.round(x*10)/10).toLocaleString("ko-KR",{maximumFractionDigits:1});
@@ -591,7 +592,21 @@ function makeSbApi(userId){
     async put(col,id,obj){ const {data,error}=await sb.from(TABLE[col]).update(toRow(col,obj)).eq("id",id).select().single(); if(error) fail(error); upsertLocal(col,fromRow(col,data)); render(); },
     async add(col,obj,quiet){ const {data,error}=await sb.from(TABLE[col]).insert(toRow(col,obj)).select().single(); if(error){ if(quiet) throw error; fail(error); } upsertLocal(col,fromRow(col,data)); render(); return data; },
     async del(col,id){ const {error}=await sb.from(TABLE[col]).delete().eq("id",id); if(error) fail(error); S[col]=S[col].filter(x=>x.id!==id); render(); },
-    async addMany(col,rows){ const out=[]; for(let i=0;i<rows.length;i+=200){ const {data,error}=await sb.from(TABLE[col]).insert(rows.slice(i,i+200).map(r=>toRow(col,r))).select(); if(error) fail(error); data.forEach(r=>{ const o=fromRow(col,r); upsertLocal(col,o); out.push(o); }); } render(); return out; },
+    async addMany(col,rows,onProg){
+      // 50건씩 나눠 넣고, 실패하면 이미 들어간 행은 건너뛰고 최대 4번 다시 시도 (중간에 끊겨도 중복 없이 이어짐)
+      const out=[], N=50, wait=ms=>new Promise(r=>setTimeout(r,ms));
+      for(let i=0;i<rows.length;i+=N){
+        let chunk=rows.slice(i,i+N).map(r=>({...toRow(col,r),id:newId()})), lastErr=null;
+        for(let t=0;t<5&&chunk.length;t++){
+          if(t>0){ await wait(700*t); const {data:ex}=await sb.from(TABLE[col]).select("*").in("id",chunk.map(r=>r.id)); (ex||[]).forEach(r=>{ const o=fromRow(col,r); upsertLocal(col,o); out.push(o); }); const got=new Set((ex||[]).map(r=>r.id)); chunk=chunk.filter(r=>!got.has(r.id)); if(!chunk.length){ lastErr=null; break; } }
+          const {data,error}=await sb.from(TABLE[col]).insert(chunk).select();
+          if(!error){ data.forEach(r=>{ const o=fromRow(col,r); upsertLocal(col,o); out.push(o); }); chunk=[]; lastErr=null; break; }
+          lastErr=error; if(/check constraint|violates|invalid input|JWT|expired/i.test(error.message||"")) break;
+        }
+        if(lastErr){ lastErr.done=out.length; lastErr.total=rows.length; fail(lastErr); }
+        if(onProg) onProg(out.length,rows.length);
+      }
+      render(); return out; },
     async delWhere(col,field,val){ const {error}=await sb.from(TABLE[col]).delete().eq(field,val); if(error) fail(error); S[col]=S[col].filter(x=>x[field]!==val); render(); },
     async wipeAll(){ for(const col of ["tx","fixed","plans","accounts"]){ const {error}=await sb.from(TABLE[col]).delete().eq("user_id",userId); if(error) fail(error); S[col]=[]; } render(); },
     saveSettings(s){ S.settings=s; applyPrefs(); render(); chain=chain.then(async()=>{ const {error}=await sb.from("settings").update(settingsTo(s)).eq("user_id",userId); if(error) handleWriteError(error); }); return chain; },
@@ -1521,12 +1536,14 @@ async function runRestore(){
     for(const p of b.plans||[]){ if(S.plans.some(x=>x.name===cut(p.name,40))) continue; await api.add("plans",{name:cut(p.name,40),type:p.type==="투자"?"투자":"저축",target:Math.max(0,+p.target||0),memo:cut(p.memo,160),order:p.sort??99,goal:Math.max(0,+p.goal||0),goal_date:p.goal_date||null,saved_base:Math.max(0,+p.saved_base||0)},true); }
     for(const f of b.fixed||[]){ if(!(+f.amount>0)) continue; const row=await api.add("fixed",{name:cut(f.name,40)||"반복 거래",type:f.type||"expense",category:cut(f.category,40),sub:cut(f.sub,40),day:f.day||null,amount:+f.amount,active:f.active!==false,auto:!!f.auto,account_id:accMap[f.account_id]||null,to_account_id:accMap[f.to_account_id]||null,start_month:f.start_month||null,last_month:f.last_month||null,tags:tg(f.tags),memo:cut(f.memo,120)},true); fxMap[f.id]=row.id; }
     const txRows=(b.tx||[]).filter(t=>+t.amount>0).map(t=>({type:t.type,unit:t.unit,date:t.unit==="day"?t.date:null,month:t.month,amount:Math.round(+t.amount),category:cut(t.category,40),sub:cut(t.sub,40),title:cut(t.title,80),method:cut(t.method,40),memo:cut(t.memo,200),tags:tg(t.tags),account_id:accMap[t.account_id]||null,to_account_id:accMap[t.to_account_id]||null,recurring_id:fxMap[t.recurring_id]||null,inst_id:t.inst_id||null,inst_no:t.inst_id?t.inst_no:null,inst_total:t.inst_id?t.inst_total:null}));
-    if(txRows.length) await api.addMany("tx",txRows);
+    if(txRows.length) await api.addMany("tx",txRows,(d,n)=>toast(`복원하는 중이에요… 거래 ${d}/${n}건 (화면을 닫지 마세요)`));
     const now=new Date(Date.now()+1000).toISOString();
     for(const a of b.accounts||[]){ const nid=accMap[a.id]; const cur=S.accounts.find(x=>x.id===nid); if(!cur) continue; await api.put("accounts",nid,{...cur,balance:a._balance!=null?+a._balance:+a.balance||0,balance_at:now,link:accMap[a.link]||""}); }
     if(b.settings) await api.saveSettings(settingsFrom(b.settings));
     toast(`복원했어요 · 거래 ${txRows.length}건`);
-  }catch(e){ console.error(e); toast("복원하지 못했어요. 파일을 확인하고 다시 시도해 주세요."); }
+  }catch(e){ console.error(e); const m=String((e&&e.message)||e||"").slice(0,120);
+    toast(e&&e.total?`거래 ${e.done}/${e.total}건까지 들어가고 멈췄어요. "모두 지우고 복원"을 체크한 채로 다시 복원해 주세요. (${m})`:`복원하지 못했어요: ${m}`);
+    const el=$(".toast"); if(el){ clearTimeout(toastT); toastT=setTimeout(()=>el.remove(),15000); } }
 }
 
 /* =================== CSV =================== */
